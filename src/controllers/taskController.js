@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { taskQueue } = require('../config/queue');
 
 const createTask = async (req, res) => {
   try {
@@ -45,6 +46,20 @@ const createTask = async (req, res) => {
         task: { ...task, status: 'COMPLETED', result: processedResult }
       });
     }
+
+    await taskQueue.add(
+      'process-task',
+      {
+        taskId: task.id,
+        userId: userId,
+        payload: payload,
+      },
+      {
+        jobId: task.id,
+        removeOnComplete: true,
+        removeOnFail: false,
+      }
+    );
 
     res.status(202).json({
       message: 'Task accepted for processing',
