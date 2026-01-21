@@ -1,15 +1,11 @@
 const { Worker } = require('bullmq');
 const db = require('./config/database');
 const { connection } = require('./config/queue');
+const logger = require('./config/logger');
 require('dotenv').config();
 
 async function processTask(taskId, payload) {
-  console.log(`Processing task ${taskId}:`, payload);
-
-  // For testing failures
-//   if (payload.action === 'fail_test') {
-//     throw new Error('Simulated failure for testing');
-//   }
+  logger.info('Processing task', { taskId, action: payload.action });
   
   switch (payload.action) {
     case 'send_email':
@@ -51,7 +47,11 @@ const worker = new Worker(
   async (job) => {
     const { taskId, payload } = job.data;
     
-    console.log(`[Worker] Starting job ${job.id} for task ${taskId}`);
+    logger.info('Job started', { 
+      jobId: job.id, 
+      taskId, 
+      attempt: job.attemptsMade + 1,
+    });
     
     try {
       await db.query(
@@ -76,11 +76,16 @@ const worker = new Worker(
         [taskId, 'COMPLETED', 'Task completed successfully']
       );
       
-      console.log(`[Worker] Completed job ${job.id} for task ${taskId}`);
+      logger.info('Job completed', { jobId: job.id, taskId });
       
       return result;
     } catch (error) {
-      console.error(`[Worker] Error processing task ${taskId}:`, error);
+      logger.error('Job processing failed', { 
+        jobId: job.id, 
+        taskId, 
+        error: error.message,
+        stack: error.stack,
+      });
       
       await db.query(
         'INSERT INTO task_logs (task_id, status, message) VALUES ($1, $2, $3)',
@@ -101,11 +106,15 @@ const worker = new Worker(
 );
 
 worker.on('completed', (job) => {
-  console.log(`[Worker] Job ${job.id} completed successfully`);
+  logger.info('Worker event: completed', { jobId: job.id });
 });
 
 worker.on('failed', async (job, err) => {
-  console.error(`[Worker] Job ${job.id} failed:`, err.message);
+  logger.error('Worker event: failed', { 
+    jobId: job.id, 
+    error: err.message,
+    attempts: job.attemptsMade,
+  });
   
   if (job.attemptsMade >= job.opts.attempts) {
     const { taskId } = job.data;
@@ -129,19 +138,22 @@ worker.on('failed', async (job, err) => {
 });
 
 worker.on('error', (err) => {
-  console.error('[Worker] Worker error:', err);
+  logger.error('Worker error', { error: err.message, stack: err.stack });
 });
 
-console.log('Worker started. Waiting for jobs...');
+logger.info('Worker started', { 
+  concurrency: 5,
+  environment: process.env.NODE_ENV,
+});
 
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, closing worker...');
+  logger.info('SIGTERM received, closing worker');
   await worker.close();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  console.log('SIGINT received, closing worker...');
+  logger.info('SIGINT received, closing worker');
   await worker.close();
   process.exit(0);
 });

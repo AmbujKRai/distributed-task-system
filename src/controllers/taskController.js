@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const { taskQueue } = require('../config/queue');
+const logger = require('../config/logger');
 
 const createTask = async (req, res) => {
   try {
@@ -28,6 +29,8 @@ const createTask = async (req, res) => {
       [task.id, task.status, 'Task created']
     );
 
+    logger.info('Task created', { taskId: task.id, userId, type, action: payload.action });
+
     if (type === 'SYNC') {
       const processedResult = { processed: true, data: payload };
       
@@ -40,6 +43,8 @@ const createTask = async (req, res) => {
         'INSERT INTO task_logs (task_id, status, message) VALUES ($1, $2, $3)',
         [task.id, 'COMPLETED', 'Task completed synchronously']
       );
+
+      logger.info('Sync task completed', { taskId: task.id });
 
       return res.status(200).json({
         message: 'Task completed',
@@ -61,12 +66,14 @@ const createTask = async (req, res) => {
       }
     );
 
+    logger.info('Async task queued', { taskId: task.id });
+
     res.status(202).json({
       message: 'Task accepted for processing',
       task
     });
   } catch (error) {
-    console.error('Create task error:', error);
+    logger.error('Create task error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -82,12 +89,13 @@ const getTaskStatus = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      logger.warn('Task not found', { taskId, userId });
       return res.status(404).json({ error: 'Task not found' });
     }
 
     res.json({ task: result.rows[0] });
   } catch (error) {
-    console.error('Get task status error:', error);
+    logger.error('Get task status error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -110,9 +118,11 @@ const getUserTasks = async (req, res) => {
 
     const result = await db.query(query, params);
 
+    logger.info('Retrieved user tasks', { userId, count: result.rows.length });
+
     res.json({ tasks: result.rows, count: result.rows.length });
   } catch (error) {
-    console.error('Get user tasks error:', error);
+    logger.error('Get user tasks error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 };

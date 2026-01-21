@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
+const logger = require('../config/logger');
 
 const register = async (req, res) => {
   try {
@@ -12,6 +13,7 @@ const register = async (req, res) => {
 
     const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
+      logger.warn('Registration attempt with existing email', { email });
       return res.status(409).json({ error: 'Email already registered' });
     }
 
@@ -22,12 +24,14 @@ const register = async (req, res) => {
       [email, passwordHash]
     );
 
+    logger.info('User registered', { userId: result.rows[0].id, email });
+
     res.status(201).json({
       message: 'User registered successfully',
       user: result.rows[0]
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -42,6 +46,7 @@ const login = async (req, res) => {
 
     const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) {
+      logger.warn('Login attempt with non-existent email', { email });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -49,6 +54,7 @@ const login = async (req, res) => {
 
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
+      logger.warn('Login attempt with invalid password', { email });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -58,13 +64,15 @@ const login = async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    logger.info('User logged in', { userId: user.id, email });
+
     res.json({
       message: 'Login successful',
       token,
       user: { id: user.id, email: user.email }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
