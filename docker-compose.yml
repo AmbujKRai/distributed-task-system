@@ -38,20 +38,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: task_system_api
-    ports:
-      - "3000:3000"
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       PORT: 3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: task_system
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,20 +51,37 @@ services:
     restart: unless-stopped
     networks:
       - task_network
+    deploy:
+      replicas: 2
+    command: sh -c "sleep 5 && node src/server.js"
+
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: task_system_nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - task_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: task_system
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,6 +92,7 @@ services:
       replicas: 2
     networks:
       - task_network
+    command: sh -c "sleep 5 && node src/worker.js"
 
 volumes:
   postgres_data:

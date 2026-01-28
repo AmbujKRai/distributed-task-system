@@ -1,6 +1,10 @@
 const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
 
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 const connection = new IORedis({
   host: process.env.REDIS_HOST || 'localhost',
   port: process.env.REDIS_PORT || 6379,

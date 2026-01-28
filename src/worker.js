@@ -2,7 +2,9 @@ const { Worker } = require('bullmq');
 const db = require('./config/database');
 const { connection } = require('./config/queue');
 const logger = require('./config/logger');
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 async function processTask(taskId, payload) {
   logger.info('Processing task', { taskId, action: payload.action });
