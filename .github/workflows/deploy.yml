@@ -74,8 +74,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           JWT_SECRET: test-secret-key
-        run: echo "Tests will run here - add later"
-        # run: npm test
+        run: npm test
 
   build:
     name: Build and Push Docker Images
