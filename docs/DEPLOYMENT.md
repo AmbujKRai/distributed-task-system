@@ -72,7 +72,7 @@ psql -h your-rds-endpoint -U postgres -d task_system -f src/models/schema.sql
 ### Step 5: Deploy Application
 ```bash
 # On EC2 instance
-git clone https://github.com/yourusername/distributed-task-system.git
+git clone https://github.com/AmbujKRai/distributed-task-system.git
 cd distributed-task-system
 
 # Create production env file
