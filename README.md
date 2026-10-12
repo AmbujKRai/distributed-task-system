@@ -1,344 +1,133 @@
-# Distributed Task & Job Processing System
+# Distributed Task Processing System
 
-A production-grade backend system for processing synchronous and asynchronous tasks with automatic retries, failure handling, and horizontal scaling.
+A backend that accepts tasks over a REST API, runs long jobs in the background on separate worker processes, and retries failed jobs automatically. I built it to learn how job queues, retries and horizontal scaling work in practice.
 
-![Architecture](https://img.shields.io/badge/Architecture-Microservices-blue)
-![Node.js](https://img.shields.io/badge/Node.js-20.x-green)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)
-![Redis](https://img.shields.io/badge/Redis-7-red)
-![Docker](https://img.shields.io/badge/Docker-Compose-blue)
-
-## Overview
-
-This system demonstrates how production backends (like Stripe, Twilio, AWS) handle background job processing at scale. It features:
-
-- **RESTful API** with JWT authentication
-- **Background job queue** using Redis + BullMQ
-- **Automatic retries** with exponential backoff
-- **Horizontal scaling** for APIs and workers
-- **Nginx reverse proxy** with load balancing and rate limiting
-- **Full Docker orchestration** for easy deployment
-- **CI/CD pipeline** with GitHub Actions
+Stack: Node.js, Express, PostgreSQL, Redis, BullMQ, Nginx, Docker Compose, GitHub Actions.
 
 ## Architecture
+
 ```
-Client Request
-    ↓
-Nginx (Load Balancer + Rate Limiter)
-    ↓
-API Servers (2 instances)
-    ↓
-PostgreSQL + Redis
-    ↓
-Worker Services (2 instances)
+Client
+  |
+Nginx  (least-connections load balancing, 10 req/s per IP rate limit)
+  |
+API x2  (Express, JWT auth)
+  |            \
+PostgreSQL     Redis (BullMQ queue "tasks")
+(tasks,          |
+ task_logs)    Worker x2  (concurrency 5 each)
+     ^           |
+     +-----------+  workers write status and results back to Postgres
 ```
 
-## Tech Stack
+## How a task flows
 
-**Backend:**
-- Node.js + Express.js
-- PostgreSQL (data persistence)
-- Redis + BullMQ (job queue)
+1. `POST /api/tasks` inserts a row into `tasks` and a "created" entry into `task_logs`.
+2. **SYNC** tasks complete inside the request and return `200`.
+3. **ASYNC** tasks are pushed onto the BullMQ queue with the task's UUID as the job ID, and the API returns `202 Accepted`. Using the task ID as the job ID means the same task cannot be queued twice.
+4. A worker picks up the job, marks the task `PROCESSING`, runs the handler, then marks it `COMPLETED` with the result.
+5. If the handler throws, BullMQ retries it up to **3 attempts** with exponential backoff (2 s, then 4 s). Each retry updates `retry_count`. After the last attempt the task is marked `FAILED` with the error.
+6. Every state change is written to `task_logs`, so each task has a full audit trail.
 
-**Infrastructure:**
-- Docker + Docker Compose
-- Nginx (reverse proxy, load balancing)
-- GitHub Actions (CI/CD)
+Task states: `PENDING -> PROCESSING -> COMPLETED` or `FAILED`.
 
-**Security:**
-- JWT authentication
-- bcrypt password hashing
-- Rate limiting (10 req/sec)
-- Security headers
+## Running it
 
-## Features
+Requires Docker Desktop.
 
-### Core Features
-- User authentication (register/login)
-- Synchronous task processing (instant response)
-- Asynchronous task processing (background workers)
-- Task status tracking and history
-- Automatic retries on failure (3 attempts)
-- Comprehensive audit logging
-
-### Production Features
-- Horizontal scaling (multiple API/worker instances)
-- Load balancing across API servers
-- Rate limiting (prevents abuse)
-- Health checks and readiness probes
-- Graceful shutdown handling
-- Structured logging with Winston
-
-## Getting Started
-
-### Prerequisites
-- Docker Desktop
-- Git
-
-### Installation
-
-1. **Clone the repository**
 ```bash
 git clone https://github.com/AmbujKRai/distributed-task-system.git
 cd distributed-task-system
+cp .env.example .env        # set DB_PASSWORD and JWT_SECRET
+docker compose up --build
 ```
 
-2. **Create environment file**
-```bash
-cp .env.example .env
-# Edit .env with your values (defaults work for local development)
-```
-
-3. **Start all services**
-```bash
-docker-compose up --build
-```
-
-4. **Verify all services are running**
-```bash
-docker-compose ps
-```
-
-All services should show "healthy" or "running" status.
-
-## API Endpoints
-
-### Authentication
-
-**Register User**
-```http
-POST /api/auth/register
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "securepassword"
-}
-```
-
-**Login**
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "securepassword"
-}
-
-Response: { "token": "jwt-token-here", ... }
-```
-
-### Tasks
-
-**Create Synchronous Task**
-```http
-POST /api/tasks
-Authorization: Bearer 
-Content-Type: application/json
-
-{
-  "type": "SYNC",
-  "payload": {
-    "action": "process_data",
-    "value": 42
-  }
-}
-```
-
-**Create Asynchronous Task**
-```http
-POST /api/tasks
-Authorization: Bearer 
-Content-Type: application/json
-
-{
-  "type": "ASYNC",
-  "payload": {
-    "action": "send_email",
-    "to": "recipient@example.com"
-  }
-}
-
-Response: 202 Accepted
-```
-
-**Get Task Status**
-```http
-GET /api/tasks/:taskId
-Authorization: Bearer 
-```
-
-**Get All User Tasks**
-```http
-GET /api/tasks?status=COMPLETED&limit=50
-Authorization: Bearer 
-```
-
-### Health
-
-**Health Check**
-```http
-GET /health
-
-Response: { "status": "healthy", "uptime": 12345 }
-```
-
-**Readiness Check**
-```http
-GET /ready
-
-Response: { "status": "ready", "database": "connected", "redis": "connected" }
-```
-
-## Testing
-
-This project includes a comprehensive test suite structure using Jest.
-
-Run tests:
-```bash
-npm test
-```
-
-**Current Status:**
-- Test infrastructure configured (Jest + Supertest)
-- Test suite structure defined
-- Integration tests scaffolded (ready for implementation)
-
-**Test Coverage:**
-- Authentication flows (register, login, validation)
-- Task creation (sync/async)
-- Task retrieval and filtering
-- Worker processing and retry logic
-- Authorization checks
-
-**To implement full integration tests:**
-1. Set up test database
-2. Implement test fixtures
-3. Fill in test bodies with actual API calls
-4. Add assertions for responses
-
-The current scaffolding demonstrates understanding of testing best practices and provides a foundation for complete test coverage.
-```
-
-## Monitoring
-
-View logs from all services:
-```bash
-docker-compose logs -f
-```
-
-View logs from specific service:
-```bash
-docker-compose logs -f api
-docker-compose logs -f worker
-docker-compose logs -f nginx
-```
-
-## Configuration
-
-### Environment Variables
-
-Default variables values
-`PORT`: `3000`
-`DB_HOST`: `postgres`
-`DB_PORT`: `5432`
-`DB_USER`: `postgres`
-`DB_PASSWORD`: Required
-`DB_NAME`: `task_system`
-`REDIS_HOST`: `redis`
-`REDIS_PORT`: `6379`
-`JWT_SECRET`: Required
-
-### Scaling
-
-Scale API servers:
-```bash
-docker-compose up --scale api=5
-```
+This starts Postgres, Redis, 2 API replicas, 2 workers and Nginx. The API is reachable through Nginx on `http://localhost`. The schema in `src/models/schema.sql` is applied automatically on first start.
 
 Scale workers:
+
 ```bash
-docker-compose up --scale worker=10
+docker compose up -d --scale worker=4
 ```
 
-## Project Structure
-```
-distributed-task-system/
-├── src/
-│   ├── config/
-│   │   ├── database.js       # PostgreSQL connection
-│   │   ├── queue.js          # Redis + BullMQ setup
-│   │   └── logger.js         # Winston logging
-│   ├── controllers/
-│   │   ├── authController.js # Auth logic
-│   │   └── taskController.js # Task logic
-│   ├── middleware/
-│   │   └── auth.js           # JWT verification
-│   ├── routes/
-│   │   ├── auth.js           # Auth routes
-│   │   └── tasks.js          # Task routes
-│   ├── models/
-│   │   └── schema.sql        # Database schema
-│   ├── server.js             # Express app
-│   └── worker.js             # Background worker
-├── docker-compose.yml        # Service orchestration
-├── Dockerfile.api            # API container
-├── Dockerfile.worker         # Worker container
-├── Dockerfile.nginx          # Nginx container
-├── nginx.conf                # Nginx configuration
-└── README.md
+If you scale the API, restart Nginx afterwards (`docker compose restart nginx`), because Nginx resolves the `api` service's addresses only at startup.
+
+## API
+
+All `/api/tasks` routes need `Authorization: Bearer <token>`.
+
+| Method | Route | Description |
+|---|---|---|
+| POST | `/api/auth/register` | Create a user (`email`, `password`). Passwords are hashed with bcrypt. |
+| POST | `/api/auth/login` | Returns a JWT valid for 24 hours. |
+| POST | `/api/tasks` | Create a task: `{ "type": "SYNC" or "ASYNC", "payload": { "action": "..." } }` |
+| GET | `/api/tasks/:taskId` | Status and result of one task (only your own tasks). |
+| GET | `/api/tasks?status=COMPLETED&limit=50&offset=0` | Your tasks, newest first. |
+| GET | `/health` | Liveness check, exposed through Nginx. |
+| GET | `/ready` | Checks Postgres and Redis connectivity. Available on the API container only, not through Nginx. |
+
+Example:
+
+```bash
+curl -X POST http://localhost/api/tasks \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"type":"ASYNC","payload":{"action":"send_email","to":"a@example.com"}}'
 ```
 
-##
- Key Learnings & Design Decisions
+### Job handlers
 
-### Why PostgreSQL?
-- ACID transactions ensure task state consistency
-- Foreign keys enforce data integrity
-- JSONB columns provide flexibility for task payloads
+The handlers are **simulated** with fixed delays so the queue behaviour can be observed without external services:
 
-### Why Redis + BullMQ?
-- Sub-millisecond latency for job queue operations
-- Automatic retry logic with exponential backoff
-- Job prioritization and rate limiting built-in
+| `action` | Simulated duration |
+|---|---|
+| `send_email` | 2 s |
+| `process_data` | 1.5 s (returns `value * 2`) |
+| `generate_report` | 3 s |
+| anything else | 1 s |
 
-### Why Nginx?
-- Load balancing across multiple API instances
-- Rate limiting prevents API abuse
-- SSL/TLS termination (production ready)
-- Single entry point simplifies security
+## Worker settings
 
-### Horizontal Scaling Strategy
-- Stateless API servers (no session storage)
-- JWT authentication (no central session store)
-- BullMQ coordinates workers via Redis (no job duplication)
+- Concurrency: 5 jobs at a time per worker process.
+- Rate limit: BullMQ's limiter (`max: 10` per 1000 ms) is shared by every worker on the queue, so total throughput is capped at 10 jobs/s however many workers run.
+- Completed jobs are removed from Redis; failed jobs are kept for inspection. Postgres remains the source of truth for task state.
+- On `SIGTERM` the worker calls `worker.close()`, which lets active jobs finish before the process exits.
 
-## Production Deployment
+## CI
 
-This system is ready for production deployment on:
-- **AWS:** EC2 (API/Workers) + RDS (PostgreSQL) + ElastiCache (Redis)
-- **Google Cloud:** Cloud Run + Cloud SQL + Memorystore
-- **Azure:** App Service + Azure Database + Azure Cache
+`.github/workflows/deploy.yml` runs on every push to `main`:
 
-See `docs/DEPLOYMENT.md` for detailed instructions.
+1. Starts Postgres and Redis service containers, applies the schema and runs `npm test`.
+2. Builds the API and worker Docker images and pushes them to GitHub Container Registry.
 
-## Security Features
+Deployment from there is manual (`docker compose pull && docker compose up -d` on the server). A second workflow deploys the API as a Node app to Azure App Service.
 
-- Password hashing with bcrypt (10 salt rounds)
-- JWT tokens with expiration (24h)
-- Rate limiting (10 requests/second per IP)
-- SQL injection protection (parameterized queries)
-- Security headers (X-Frame-Options, X-XSS-Protection)
-- Input validation on all endpoints
+## Tests
 
-## Performance
+`tests/auth.test.js` contains placeholder test cases only. Integration tests for auth, task creation and worker retries are still to be written.
 
-**Current Capacity:**
-- 1000+ requests/second (API)
-- 10 concurrent jobs per worker
-- Scales horizontally to handle more load
+## Known limitations
 
-## Acknowledgments
+These are deliberate notes on what the current design does not handle yet:
 
-Built as a demonstration of production-grade backend engineering practices.
+- **Dual write on task creation.** The API inserts into Postgres and then adds the job to Redis as two separate steps. If Redis is down, the request returns `500` but the task row stays `PENDING` forever. A transactional outbox, or a sweeper that re-queues stale `PENDING` tasks, would fix this.
+- **At-least-once execution.** If a worker crashes mid-job, BullMQ marks the job as stalled once its lock expires (30 s by default) and another worker runs it again. Handlers with real side effects, like sending an email, would need an idempotency check (for example, skip if the task is already `COMPLETED`).
+- **API shutdown is not graceful.** The API process exits immediately on `SIGTERM` instead of draining in-flight requests.
+- **No real handlers or load tests yet.** Throughput figures have not been measured.
+
+## Project structure
+
+```
+src/
+  config/        database.js (pg pool), queue.js (BullMQ queue + retry policy), logger.js (Winston)
+  controllers/   authController.js, taskController.js
+  middleware/    auth.js (JWT verification)
+  routes/        auth.js, tasks.js
+  models/        schema.sql (users, tasks, task_logs + indexes)
+  server.js      Express app, /health and /ready
+  worker.js      BullMQ worker and job handlers
+docker-compose.yml, Dockerfile.api, Dockerfile.worker, Dockerfile.nginx, nginx.conf
+```
+
+## License
+
+MIT
